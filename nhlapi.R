@@ -1,27 +1,22 @@
+
+# load libraries ----
 library(tidyverse)
 library(jsonlite)
 library(lubridate)
-#https://github.com/sfrechette/nhlplaybyplay2-node/
-getschedule <- function(season="20172018"){
+
+
+# define functions ----
+get_schedule <- function(season="20172018"){
   fromJSON(paste0("http://live.nhl.com/GameData/SeasonSchedule-", season ,".json")) 
 }
 
-schedule <- getschedule()  %>% mutate(datetime = as_datetime(est),
-                          date = as.Date(datetime))  %>% 
-  filter( datetime< Sys.time() - 12*60*60) #games that started at least 12 hours ago
-# for each game ID in the schedule, we will download the play by play data ,
-# in list format (pbp) then wrangle the data to create two tables:
-# one containing the events (one row per game_id + eventId)and one containing the events_players (one row per game_id + eventId + player_id)
-
-
-getdata  <- function(gameid){
+get_data  <- function(gameid){
   print(gameid)
   fromJSON(paste0("http://statsapi.web.nhl.com/api/v1/game/", gameid, "/feed/live"))}
 
 myprocess  <- function(pbp){
   print( pbp$gamePk)
-
-    # Some games such as "2017020018" are broken and have no play by play data.
+  # Some games such as "2017020018" are broken and have no play by play data.
   # skip the tibble creating part as required.
   #https://www.nhl.com/gamecenter/tbl-vs-fla/2017/10/07/2017020018#game=2017020018,game_state=final,game_tab=plays
   
@@ -60,12 +55,20 @@ myprocess  <- function(pbp){
   list(events = tibble(), events_players = tibble())
 }}
 
+# 1 - get game schedule ----
 
+schedule <- get_schedule()  %>% mutate(datetime = as_datetime(est),
+date = as.Date(datetime))  %>% 
+  filter( datetime< Sys.time() - 12*60*60) #games that started at least 12 hours ago
+# for each game ID in the schedule, we will download the play by play data ,
+# in list format (pbp) then wrangle the data to create two tables:
+# one containing the events (one row per game_id + eventId)and one containing the events_players (one row per game_id + eventId + player_id)
 
-#download data from past game
-mydata <- schedule %>%  mutate(pbp=map(id, getdata))
-
-# version originale 
+# 2 - download data from past games ----
+mydata <- schedule %>%  mutate(pbp=map(id, get_data ))
+saveRDS(mydata, "mydata.rds")
+# 3 - process data ----
+# original processing of data using purrr:map ----
 # mydata2 <- mydata %>% mutate(processed = map(pbp , myprocess))
 # mydata3 <- mydata2 %>% mutate(events = map(processed, ~.x[["events"]]),
 #                              events_players = map(processed, ~.x[["events_players"]])) 
@@ -73,19 +76,22 @@ mydata <- schedule %>%  mutate(pbp=map(id, getdata))
 # mydf_events <-  mydata3$events %>% bind_rows()
 # mydf_events_players <- mydata3$events_players %>% bind_rows()
 
-## alternative parallele
+# current processing of data using parallel::parLapply ----
 library(parallel)
   cl <- makeCluster(parallel:::detectCores() -1  )
   clusterEvalQ(cl, library("tidyverse"))
   clusterExport(cl, "mydata")
   mydata2 <- parLapply(cl = cl, X = mydata$pbp, fun = myprocess)
 stopCluster(cl)
+saveRDS(mydata2, "mydata2.rds")
 
 mydata3 <- mydata2 %>% transpose %>% as_tibble()
 mydf_events <-  mydata3$events %>% bind_rows()
 mydf_events_players <- mydata3$events_players %>% bind_rows()
 
-## plot shots
+
+
+# 4 plot data ----
 
 #point des shots + goals
 ggplot(data = mydf_events %>% filter(event %in% c("Shot", "Goal")) %>%
