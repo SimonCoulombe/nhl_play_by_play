@@ -234,7 +234,7 @@ ggplot(shots  %>% filter(player.primaryPosition.code != "G") ) +
   geom_line(data= goal_line,aes(x=x, y=y), color ="red")+
   geom_line(data= blue_line,aes(x=x, y=y), color ="blue")+
   coord_cartesian(xlim=c(0,100)) +
-  coord_fixed(ratio = 1)
+  coord_fixed(ratio = 1)+
   facet_wrap(~ player.primaryPosition.code)+
   theme(
   panel.grid.major = element_blank(),
