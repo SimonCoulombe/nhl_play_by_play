@@ -9,9 +9,26 @@ library(lubridate)
 get_schedule <- function(season="20172018"){
   fromJSON(paste0("http://live.nhl.com/GameData/SeasonSchedule-", season ,".json")) 
 }
+# tester 8468309
+get_player_data <- function(id = "8475172"){ #Nazem Kadri  
+  print(id)
+  tmp <- fromJSON(paste0("https://statsapi.web.nhl.com/api/v1/people/", id ,".json")) %>% .[["people"]] 
+  cn <- colnames(tmp)
+  if ("currentTeam"  %in% cn ) {
+    cT <- unnest(tmp$currentTeam)
+    colnames(cT) <- paste0("currentTeam.", colnames(cT))
+    tmp2 <- bind_cols(tmp %>%  select(-currentTeam, -primaryPosition), cT)
+  } else{ tmp2 <- tmp %>%  select( -primaryPosition)}
+  
+  pP <- unnest(tmp$primaryPosition)
+  colnames(pP) <- paste0("primaryPosition.", colnames(pP))
+  bind_cols(tmp2, pP)
+  }
 
 get_data  <- function(gameid){
-  print(gameid)
+
+  
+    print(gameid)
   fromJSON(paste0("http://statsapi.web.nhl.com/api/v1/game/", gameid, "/feed/live"))}
 
 myprocess  <- function(pbp){
@@ -58,7 +75,7 @@ myprocess  <- function(pbp){
 # 1 - get game schedule ----
 
 schedule <- get_schedule()  %>% mutate(datetime = as_datetime(est),
-date = as.Date(datetime))  %>% 
+                                       date = as.Date(datetime))  %>% 
   filter( datetime< Sys.time() - 12*60*60) #games that started at least 12 hours ago
 # for each game ID in the schedule, we will download the play by play data ,
 # in list format (pbp) then wrangle the data to create two tables:
@@ -67,6 +84,7 @@ date = as.Date(datetime))  %>%
 # 2 - download data from past games ----
 mydata <- schedule %>%  mutate(pbp=map(id, get_data ))
 saveRDS(mydata, "mydata.rds")
+mydata <- readRDS("mydata.rds")
 # 3 - process data ----
 # original processing of data using purrr:map ----
 # mydata2 <- mydata %>% mutate(processed = map(pbp , myprocess))
@@ -84,62 +102,53 @@ library(parallel)
   mydata2 <- parLapply(cl = cl, X = mydata$pbp, fun = myprocess)
 stopCluster(cl)
 saveRDS(mydata2, "mydata2.rds")
-
+mydata2 <- readRDS("mydata2.rds")
 mydata3 <- mydata2 %>% transpose %>% as_tibble()
 mydf_events <-  mydata3$events %>% bind_rows()
 mydf_events_players <- mydata3$events_players %>% bind_rows()
+# 4 get players data ----
+#https://statsapi.web.nhl.com/api/v1/people/ID
+players_data <- mydf_events_players %>% distinct(id) %>%     pull(id) %>% arranger() %>%
+  map_df(get_player_data) 
 
 
+saveRDS(players_data, "players_data.rds")
 
-# 4 plot data ----
-
-#point des shots + goals
-ggplot(data = mydf_events %>% filter(event %in% c("Shot", "Goal")) %>%
-         mutate(y = case_when(x<0 ~ -y,
-                              TRUE ~ y),
-                x = abs(x)),
-       aes(x= abs(x), y=y, color = event)) +
-  geom_point(alpha = 1/5)+
-  geom_line(aes(x=89, y=y), color ="red")+
-  geom_line(aes(x=25, y=y), color ="blue")+ 
-  coord_cartesian(xlim=c(0,100)) 
-
+# 5 plot data ----
+shots <- mydf_events %>% filter(event %in% c("Goal", "Shot", "Blocked Shot", "Missed Shot")) %>%
+  filter(!is.na(x)) %>%
+  mutate(
+    y = case_when(x<0 ~ -y,TRUE ~ y),
+    x = abs(x),
+    success = ifelse(event == "Goal",1,0),
+    angle = atan(y /(89-x)) * 180 / pi,
+    distance = ((89-x)^2+ (y^2))^0.5)
 
 #hexbins des shots
-ggplot(data = mydf_events %>% filter(event %in% c("Shot")) %>%
-         mutate(y = case_when(x<0 ~ -y,
-                              TRUE ~ y),
-                x = abs(x)),
+ggplot(shots,
        aes(x= abs(x), y=y)) +
   geom_hex()+
   geom_line(aes(x=89, y=y), color ="red")+
   geom_line(aes(x=25, y=y), color ="blue")+ 
   coord_cartesian(xlim=c(0,100)) 
+ggsave("shots.png")
 
 #hexbins des goals
-ggplot(data = mydf_events %>% filter(event %in% c("Goal")) %>%
-         mutate(y = case_when(x<0 ~ -y,
-                              TRUE ~ y),
-                x = abs(x)),
+ggplot(data = shots %>% filter(event == "Goal"),
        aes(x= abs(x), y=y)) +
   geom_hex()+
   geom_line(aes(x=89, y=y), color ="red")+
   geom_line(aes(x=25, y=y), color ="blue")+ 
   coord_cartesian(xlim=c(0,100)) 
+ggsave("goals.png")
+
 # hexplot taux de succès
-ggplot(data = mydf_events %>% filter(event %in% c("Goal", "Shot")) %>% 
-         mutate(case_when( y>40 ~ 40,
-                           y< -40 ~ -40,
-                           TRUE ~ y)) %>%
-         mutate(
-                y = case_when(x<0 ~ -y,
-                              TRUE ~ y),
-                x = abs(x),
-                success = ifelse(event == "Goal",1,0)),
+ggplot(data = shots,
        aes(x= abs(x), y=y, z = success)) +
   stat_summary_hex( )+
   geom_line(aes(x=89, y=y), color ="red")+
   geom_line(aes(x=25, y=y), color ="blue")+ 
   coord_cartesian(xlim=c(0,100)) 
+ggsave("goal_pct.png")
 
-
+# 6 - model data ----
