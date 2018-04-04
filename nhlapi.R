@@ -8,24 +8,20 @@ getschedule <- function(season="20172018"){
 
 schedule <- getschedule()  %>% mutate(datetime = as_datetime(est),
                           date = as.Date(datetime))  %>% 
-  filter( date< Sys.Date())
+  filter( datetime< Sys.time() - 12*60*60) #games that started at least 12 hours ago
 # for each game ID in the schedule, we will download the play by play data ,
 # in list format (pbp) then wrangle the data to create two tables:
 # one containing the events (one row per game_id + eventId)and one containing the events_players (one row per game_id + eventId + player_id)
 
 
-
 getdata  <- function(gameid){
-print(gameid)
+  print(gameid)
   fromJSON(paste0("http://statsapi.web.nhl.com/api/v1/game/", gameid, "/feed/live"))}
 
-
-#myprocess  <- function(gameid){
 myprocess  <- function(pbp){
   print( pbp$gamePk)
-  #pbp <-  fromJSON(paste0("http://statsapi.web.nhl.com/api/v1/game/", gameid, "/feed/live"))
 
-  # Some games such as "2017020018" are broken and have no play by play data.
+    # Some games such as "2017020018" are broken and have no play by play data.
   # skip the tibble creating part as required.
   #https://www.nhl.com/gamecenter/tbl-vs-fla/2017/10/07/2017020018#game=2017020018,game_state=final,game_tab=plays
   
@@ -79,7 +75,7 @@ mydata <- schedule %>%  mutate(pbp=map(id, getdata))
 
 ## alternative parallele
 library(parallel)
-  cl <- makeCluster(parallel:::detectCores()  )
+  cl <- makeCluster(parallel:::detectCores() -1  )
   clusterEvalQ(cl, library("tidyverse"))
   clusterExport(cl, "mydata")
   mydata2 <- parLapply(cl = cl, X = mydata$pbp, fun = myprocess)
