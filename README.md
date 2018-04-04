@@ -16,3 +16,7 @@ This project builds on the following:
   
   
   
+![screenshot](/mcdavid_goals.png?raw=true "Screenshot")
+![screenshot](/shots.png?raw=true "Screenshot")
+![screenshot](/goals.png?raw=true "Screenshot")
+![screenshot](/goal_pct.png?raw=true "Screenshot")
