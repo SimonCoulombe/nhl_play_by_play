@@ -20,3 +20,6 @@ This project builds on the following:
 ![screenshot](/shots.png?raw=true "Screenshot")
 ![screenshot](/goals.png?raw=true "Screenshot")
 ![screenshot](/goal_pct.png?raw=true "Screenshot")
+
+Here's the link to the shifts JSON's:
+http://www.nhl.com/stats/rest/shiftcharts?cayenneExp=gameId=2017020001
