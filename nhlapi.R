@@ -372,34 +372,50 @@ list_time <-  data.frame(period = c(rep(1, 1200), rep(2, 1200), rep(3,1200)),
 #fuzzy join
 #https://stackoverflow.com/questions/37289405/dplyr-left-join-by-less-than-greater-than-condition
 
-zz <- list_time %>% fuzzy_left_join(skaters %>% select(teamAbbrev, periodz = period, int_start_time, int_end_time, lastName,playerId, player.primaryPosition.code),
+allseconds <- list_time %>% fuzzy_left_join(skaters %>% select(teamAbbrev, periodz = period, int_start_time, int_end_time, lastName,playerId, player.primaryPosition.code),
                               by=c("period" = "periodz", "time" = "int_start_time", "time" = "int_end_time"),
                               match_fun = list(`==`, `>`, `<=`))
 
 
 
-zzz <- zz %>% select(period, time, lastName) %>% arrange(period,time,lastName) %>%  nest(-period, -time)  %>%
-  mutate (players = map(data, ~.x[[1]]),
+shifts <- allseconds %>% select(period, time, teamAbbrev,playerId) %>% arrange(period,time,teamAbbrev, playerId) %>%  nest(-period, -time)  %>%
+  mutate (team =  map(data, ~.x[["teamAbbrev"]]),
+          players = map(data, ~.x[["playerId"]]),
           lagplayers = lag(players),
           lagperiod = lag(period),
           #same = map2(players,lagplayers, function(x,y){ identical(x,y)}),
           same = pmap(list(players, lagplayers, period, lagperiod), function(players, lagplayers, period, lagperiod){
             identical(players,lagplayers) & identical(period, lagperiod)}),
           shift =  cumsum(same==FALSE)) %>%
-  select(-lagplayers, -data) %>%
+  select(-lagplayers, -data, -lagperiod) %>%
   group_by(shift) %>%
   mutate (int_start_time = min(time),  ## i'd rather summarise than mutate+filter, but I cant group by players because it is a list
             int_end_time = max(time)) %>%
+  ungroup() %>%
   filter( same == FALSE) %>%
+  mutate(duration = int_end_time -int_start_time + 1 ) %>%
   select(-same, -time)
+  
 
 
 goals <- mygame2017020001 %>% filter(event == "Goal") %>% 
   mutate(time = as.integer(str_sub(periodTime,1,2))*60 +  as.integer(str_sub(periodTime,4,5))) %>%
   select(period, time, description, team.triCode)
   
-zzzz<- zzz %>% fuzzy_left_join(goals %>% select(periodz = period, timez = time, description, team.name),
+shifts_n_goals <- shifts %>% fuzzy_left_join(goals %>% select(periodz = period, timez = time, description, team.triCode),
                         by=c("period" = "periodz", "int_start_time" = "timez", "int_end_time" = "timez"),
-                        match_fun = list(`==`, `<=`, `>=`))
+                        match_fun = list(`==`, `<=`, `>=`)) %>%
+  select(-periodz, -timez)
 
-shifts_w_goals <- zzzz %>% filter(!(is.na(team.name)))
+shifts_w_goals <- shifts_n_goals %>% filter(!(is.na(team.triCode)))
+
+## ah shit mes TORplayers sont toujours identiques..
+create2shifts <- shifts_n_goals %>% mutate(
+  TORplayers = map2(players, team, function(x,y){ players[[1]][team[[1]]=="TOR"]}),
+  WPGplayers = map2(players, team, function(x,y){ players[[1]][team[[1]]=="WPG"]}),
+  TORgoal = case_when(team.triCode =="TOR" ~ 1, TRUE ~ 0),
+  WPGgoal = case_when(team.triCode =="WPG" ~ 1, TRUE ~ 0))  %>%
+  select(TORplayers,WPGplayers,  TORgoal, WPGgoal, duration)
+
+### Now I need to take create2shifts and create dummies for each player ids. 
+zz <-create2shifts %>% unnest(TORplayers)
