@@ -4,6 +4,8 @@ library(tidyverse)
 library(jsonlite)
 library(lubridate)
 library(ggforce)
+library(data.table)
+library(fuzzyjoin)
 
 # define functions ----
 get_schedule <- function(season="20172018"){
@@ -340,3 +342,64 @@ ggsave("goal_pct.png")
 
 
 # 6 - model data ----
+
+# 7 - mess around
+
+players_data <- readRDS("players_data.rds")
+game_data <- readRDS("game_data.rds")
+events <- readRDS("mydf_events.rds")
+events_players <- readRDS("mydf_events_players.rds")
+
+pbp <- fread("pbp_20172018.csv") %>% as_tibble()
+game2017020001 <- pbp %>% filter(game_id == "2017020001")
+mygame2017020001 <- events %>% filter(gamePk =="2017020001")
+
+
+shifts <-   fromJSON("http://www.nhl.com/stats/rest/shiftcharts?cayenneExp=gameId=2017020001") 
+
+
+shifts_data <- shifts[["data"]]  %>% as_tibble( ) %>%
+  left_join(players_data %>% select(playerId = player.id, player.fullName, player.primaryPosition.code)) %>%
+  select(teamName, period, startTime, endTime, shiftNumber, lastName, player.primaryPosition.code, everything()) %>% arrange(teamName, period, startTime)
+
+skaters <- shifts_data %>% filter(player.primaryPosition.code != "G") %>% 
+  mutate(int_start_time = as.integer(str_sub(startTime,1,2))*60 +  as.integer(str_sub(startTime,4,5)) ,
+         int_end_time = as.integer(str_sub(endTime,1,2))*60 +  as.integer(str_sub(endTime,4,5)) )
+
+list_time <-  data.frame(period = c(rep(1, 1200), rep(2, 1200), rep(3,1200)),
+                         time = c(rep(seq(1,1200),3)))
+
+#fuzzy join
+#https://stackoverflow.com/questions/37289405/dplyr-left-join-by-less-than-greater-than-condition
+
+zz <- list_time %>% fuzzy_left_join(skaters %>% select(teamAbbrev, periodz = period, int_start_time, int_end_time, lastName,playerId, player.primaryPosition.code),
+                              by=c("period" = "periodz", "time" = "int_start_time", "time" = "int_end_time"),
+                              match_fun = list(`==`, `>`, `<=`))
+
+
+
+zzz <- zz %>% select(period, time, lastName) %>% arrange(period,time,lastName) %>%  nest(-period, -time)  %>%
+  mutate (players = map(data, ~.x[[1]]),
+          lagplayers = lag(players),
+          lagperiod = lag(period),
+          #same = map2(players,lagplayers, function(x,y){ identical(x,y)}),
+          same = pmap(list(players, lagplayers, period, lagperiod), function(players, lagplayers, period, lagperiod){
+            identical(players,lagplayers) & identical(period, lagperiod)}),
+          shift =  cumsum(same==FALSE)) %>%
+  select(-lagplayers, -data) %>%
+  group_by(shift) %>%
+  mutate (int_start_time = min(time),  ## i'd rather summarise than mutate+filter, but I cant group by players because it is a list
+            int_end_time = max(time)) %>%
+  filter( same == FALSE) %>%
+  select(-same, -time)
+
+
+goals <- mygame2017020001 %>% filter(event == "Goal") %>% 
+  mutate(time = as.integer(str_sub(periodTime,1,2))*60 +  as.integer(str_sub(periodTime,4,5))) %>%
+  select(period, time, description, team.triCode)
+  
+zzzz<- zzz %>% fuzzy_left_join(goals %>% select(periodz = period, timez = time, description, team.name),
+                        by=c("period" = "periodz", "int_start_time" = "timez", "int_end_time" = "timez"),
+                        match_fun = list(`==`, `<=`, `>=`))
+
+shifts_w_goals <- zzzz %>% filter(!(is.na(team.name)))
