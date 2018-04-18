@@ -343,7 +343,7 @@ ggsave("goal_pct.png")
 
 # 6 - model data ----
 
-# 7 - mess around
+# 7 - mess around with shift data -----
 
 players_data <- readRDS("players_data.rds")
 game_data <- readRDS("game_data.rds")
@@ -357,26 +357,33 @@ mygame2017020001 <- events %>% filter(gamePk =="2017020001")
 
 shifts <-   fromJSON("http://www.nhl.com/stats/rest/shiftcharts?cayenneExp=gameId=2017020001") 
 
-
+# shifts_data a une ligne par joueur-shift
 shifts_data <- shifts[["data"]]  %>% as_tibble( ) %>%
   left_join(players_data %>% select(playerId = player.id, player.fullName, player.primaryPosition.code)) %>%
   select(teamName, period, startTime, endTime, shiftNumber, lastName, player.primaryPosition.code, everything()) %>% arrange(teamName, period, startTime)
 
+# skaters prend shifts_data, enlève les gardiens et crée int_start_time et int_end_time
 skaters <- shifts_data %>% filter(player.primaryPosition.code != "G") %>% 
   mutate(int_start_time = as.integer(str_sub(startTime,1,2))*60 +  as.integer(str_sub(startTime,4,5)) ,
          int_end_time = as.integer(str_sub(endTime,1,2))*60 +  as.integer(str_sub(endTime,4,5)) )
 
+#list_time est la lsite de toutes les 3600 secondes du match( 3 périodes * 1200 secondes)
 list_time <-  data.frame(period = c(rep(1, 1200), rep(2, 1200), rep(3,1200)),
                          time = c(rep(seq(1,1200),3)))
 
-#fuzzy join
+#fuzzy join pour voir qui est sur la glace pour chacune des secondes
 #https://stackoverflow.com/questions/37289405/dplyr-left-join-by-less-than-greater-than-condition
 
 allseconds <- list_time %>% fuzzy_left_join(skaters %>% select(teamAbbrev, periodz = period, int_start_time, int_end_time, lastName,playerId, player.primaryPosition.code),
-                              by=c("period" = "periodz", "time" = "int_start_time", "time" = "int_end_time"),
-                              match_fun = list(`==`, `>`, `<=`))
-
-
+                                               by=c("period" = "periodz", "time" = "int_start_time", "time" = "int_end_time"),
+                                               match_fun = list(`==`, `>`, `<=`))
+# allsecondsTOR <- list_time %>% fuzzy_left_join(skaters %>% filter(teamAbbrev =="TOR") %>% select(teamAbbrev, periodz = period, int_start_time, int_end_time, lastName,playerId, player.primaryPosition.code),
+#                               by=c("period" = "periodz", "time" = "int_start_time", "time" = "int_end_time"),
+#                               match_fun = list(`==`, `>`, `<=`))
+# allsecondsWPG <- list_time %>% fuzzy_left_join(skaters %>% filter(teamAbbrev =="WPG") %>% select(teamAbbrev, periodz = period, int_start_time, int_end_time, lastName,playerId, player.primaryPosition.code),
+#                                                by=c("period" = "periodz", "time" = "int_start_time", "time" = "int_end_time"),
+#                                                match_fun = list(`==`, `>`, `<=`))
+# 
 
 shifts <- allseconds %>% select(period, time, teamAbbrev,playerId) %>% arrange(period,time,teamAbbrev, playerId) %>%  nest(-period, -time)  %>%
   mutate (team =  map(data, ~.x[["teamAbbrev"]]),
@@ -397,7 +404,6 @@ shifts <- allseconds %>% select(period, time, teamAbbrev,playerId) %>% arrange(p
   select(-same, -time)
   
 
-
 goals <- mygame2017020001 %>% filter(event == "Goal") %>% 
   mutate(time = as.integer(str_sub(periodTime,1,2))*60 +  as.integer(str_sub(periodTime,4,5))) %>%
   select(period, time, description, team.triCode)
@@ -409,13 +415,17 @@ shifts_n_goals <- shifts %>% fuzzy_left_join(goals %>% select(periodz = period, 
 
 shifts_w_goals <- shifts_n_goals %>% filter(!(is.na(team.triCode)))
 
-## ah shit mes TORplayers sont toujours identiques..
+
 create2shifts <- shifts_n_goals %>% mutate(
-  TORplayers = map2(players, team, function(x,y){ players[[1]][team[[1]]=="TOR"]}),
-  WPGplayers = map2(players, team, function(x,y){ players[[1]][team[[1]]=="WPG"]}),
+  TORplayers = map2(players, team, function(players,team){ players[team == "TOR"]}),
+  WPGplayers = map2(players, team, function(players,team){ players[team == "WPG"]}),
   TORgoal = case_when(team.triCode =="TOR" ~ 1, TRUE ~ 0),
   WPGgoal = case_when(team.triCode =="WPG" ~ 1, TRUE ~ 0))  %>%
-  select(TORplayers,WPGplayers,  TORgoal, WPGgoal, duration)
+  select(shift, period, int_start_time, int_end_time,TORplayers,WPGplayers,  TORgoal, WPGgoal, duration)
 
-### Now I need to take create2shifts and create dummies for each player ids. 
-zz <-create2shifts %>% unnest(TORplayers)
+### TODO: Now I need to take create2shifts and create dummies for each player ids. 
+zz <-create2shifts %>% group_by(shift) %>% unnest(TORplayers) 
+zzz <- zz  %>% spread(key= TORplayers, value=1, sep="")
+
+
+
