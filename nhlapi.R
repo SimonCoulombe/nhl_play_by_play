@@ -511,6 +511,7 @@ shifts_data <- shifts[["data"]]  %>% as_tibble() %>%
     players_data %>% select(playerId = player.id, player.fullName, player.primaryPosition.code)
   ) %>%
   select(
+    gamePk = gameId,
     teamName,
     period,
     startTime,
@@ -519,7 +520,9 @@ shifts_data <- shifts[["data"]]  %>% as_tibble() %>%
     lastName,
     player.primaryPosition.code,
     everything()
-  ) %>% arrange(teamName, period, startTime)
+  ) %>% arrange(teamName, period, startTime) %>%
+  left_join(schedule%>% select(gamePk = id, a, h )) %>%
+  mutate( home_away = ifelse(teamAbbrev == h, "HOME", "AWAY"))
 
 # skaters prend shifts_data, enlève les gardiens et crée int_start_time et int_end_time
 skaters <-
@@ -529,6 +532,14 @@ skaters <-
     int_end_time = as.integer(str_sub(endTime, 1, 2)) * 60 +  as.integer(str_sub(endTime, 4, 5))
   ) %>%
   filter(int_start_time < int_end_time) 
+ 
+skaters_remove <-  # on dirait que les shifts bizarres avec durées 0 sont les buts des gens...  TODO : understand this
+  shifts_data %>% filter(player.primaryPosition.code != "G") %>%
+  mutate(
+    int_start_time = as.integer(str_sub(startTime, 1, 2)) * 60 +  as.integer(str_sub(startTime, 4, 5)) ,
+    int_end_time = as.integer(str_sub(endTime, 1, 2)) * 60 +  as.integer(str_sub(endTime, 4, 5))
+  ) %>%
+  filter(int_start_time >= int_end_time) 
 
 #list_time est la lsite de toutes les 3600 secondes du match( 3 périodes * 1200 secondes)
 list_time <-
@@ -538,7 +549,8 @@ list_time <-
 
 skaters_seconds <- skaters %>%
   select(
-    teamAbbrev,
+    gamePk,
+    home_away,
     period,
     int_start_time,
     int_end_time,
@@ -576,9 +588,9 @@ allseconds <- list_time  %>%
 #
 
 shifts <-
-  allseconds %>% select(period, time, teamAbbrev, playerId) %>% arrange(period, time, teamAbbrev, playerId) %>%  nest(-period,-time)  %>%
+  allseconds %>% select(gamePk, period, time, home_away, playerId) %>% arrange(period, time, home_away, playerId) %>%  nest(-period,-time)  %>%
   mutate (
-    team =  map(data, ~ .x[["teamAbbrev"]]),
+    team =  map(data, ~ .x[["home_away"]]),
     players = map(data, ~ .x[["playerId"]]),
     lagplayers = lag(players),
     lagperiod = lag(period),
@@ -607,7 +619,9 @@ shifts <-
 
 goals <- mygame2017020001 %>% filter(event == "Goal") %>%
   mutate(time = as.integer(str_sub(periodTime, 1, 2)) * 60 +  as.integer(str_sub(periodTime, 4, 5))) %>%
-  select(period, time, description, team.triCode)
+  select(gamePk, period, time, description, team.triCode)  %>%
+  left_join(schedule%>% select(gamePk = id, a, h )) %>%
+  mutate( home_away = ifelse(team.triCode == h, "HOME", "AWAY"))
 
 # fuzzy join here is not too slow (maybe because goals doesnt have many lines..?)
 shifts_n_goals <-
@@ -616,7 +630,7 @@ shifts_n_goals <-
       periodz = period,
       timez = time,
       description,
-      team.triCode
+      home_away
     ),
     by = c(
       "period" = "periodz",
@@ -629,28 +643,28 @@ shifts_n_goals <-
 
 
 
-shifts_w_goals <- shifts_n_goals %>% filter(!(is.na(team.triCode)))
+shifts_w_goals <- shifts_n_goals %>% filter(!(is.na(home_away)))
 
 
 create2shifts <- shifts_n_goals %>% mutate(
-  TORplayers = map2(players, team, function(players, team) {
-    players[team == "TOR"]
+  homeplayers = map2(players, team, function(players, team) {
+    players[team == "HOME"]
   }),
-  WPGplayers = map2(players, team, function(players, team) {
-    players[team == "WPG"]
+  awayplayers = map2(players, team, function(players, team) {
+    players[team == "AWAY"]
   }),
-  TORgoal = case_when(team.triCode == "TOR" ~ 1, TRUE ~ 0),
-  WPGgoal = case_when(team.triCode == "WPG" ~ 1, TRUE ~ 0)
+  homegoal = case_when(home_away == "HOME" ~ 1, TRUE ~ 0),
+  awaygoal = case_when(home_away == "AWAY" ~ 1, TRUE ~ 0)
 )  %>%
   select(
     shift,
     period,
     int_start_time,
     int_end_time,
-    TORplayers,
-    WPGplayers,
-    TORgoal,
-    WPGgoal,
+    homeplayers,
+    awayplayers,
+    homegoal,
+    awaygoal,
     duration
   )
 
