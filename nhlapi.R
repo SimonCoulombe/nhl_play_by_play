@@ -527,7 +527,8 @@ skaters <-
   mutate(
     int_start_time = as.integer(str_sub(startTime, 1, 2)) * 60 +  as.integer(str_sub(startTime, 4, 5)) ,
     int_end_time = as.integer(str_sub(endTime, 1, 2)) * 60 +  as.integer(str_sub(endTime, 4, 5))
-  )
+  ) %>%
+  filter(int_start_time < int_end_time) 
 
 #list_time est la lsite de toutes les 3600 secondes du match( 3 périodes * 1200 secondes)
 list_time <-
@@ -535,29 +536,28 @@ list_time <-
              time = c(rep(seq(1, 1200), 3)))
 
 
+skaters_seconds <- skaters %>%
+  select(
+    teamAbbrev,
+    period,
+    int_start_time,
+    int_end_time,
+    lastName,
+    playerId,
+    player.primaryPosition.code
+  ) %>%
+  mutate(data = map2(int_start_time, int_end_time, ~ {
+    ## Génération des secondes du shift
+    data_frame(time = seq(from = .x + 1,
+                          to = .y,
+                          by = 1))
+  })) %>%
+  select(-int_end_time, -int_start_time)  %>%
+  unnest(data)
+
 
 allseconds <- list_time  %>%
-  left_join(
-    skaters %>%
-      select(
-        teamAbbrev,
-        period,
-        int_start_time,
-        int_end_time,
-        lastName,
-        playerId,
-        player.primaryPosition.code
-      ) %>%
-      filter(int_start_time < int_end_time) %>%
-      mutate(data = map2(int_start_time, int_end_time, ~ {
-        ## Génération des secondes du shift
-        data_frame(time = seq(from = .x + 1,
-                              to = .y,
-                              by = 1))
-      })) %>%
-      select(-int_end_time, -int_start_time)  %>%
-      unnest(data)
-  )
+  left_join(skaters_seconds  )
 
 
 # I used to do a fuzzy join pour voir qui est sur la glace pour chacune des secondes
@@ -593,16 +593,23 @@ shifts <-
   mutate (int_start_time = min(time),
           ## i'd rather summarise than mutate+filter, but I cant group by players because it is a list
           int_end_time = max(time)) %>%
-  ungroup() %>%
   filter(same == FALSE) %>%
   mutate(duration = int_end_time - int_start_time + 1) %>%
-  select(-same,-time)
+  select(-same,-time) #%>%
+  # mutate(seconds = map2(int_start_time, int_end_time, ~ {
+  #   ## Génération des secondes du shift
+  #   data_frame(time = seq(from = .x ,
+  #                         to = .y,
+  #                         by = 1))
+  # })) 
+
 
 
 goals <- mygame2017020001 %>% filter(event == "Goal") %>%
   mutate(time = as.integer(str_sub(periodTime, 1, 2)) * 60 +  as.integer(str_sub(periodTime, 4, 5))) %>%
   select(period, time, description, team.triCode)
 
+# fuzzy join here is not too slow (maybe because goals doesnt have many lines..?)
 shifts_n_goals <-
   shifts %>% fuzzy_left_join(
     goals %>% select(
@@ -619,6 +626,8 @@ shifts_n_goals <-
     match_fun = list(`==`, `<=`, `>=`)
   ) %>%
   select(-periodz,-timez)
+
+
 
 shifts_w_goals <- shifts_n_goals %>% filter(!(is.na(team.triCode)))
 
