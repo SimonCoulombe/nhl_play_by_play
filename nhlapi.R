@@ -53,6 +53,14 @@ get_data  <- function(gameid) {
   ))
 }
 
+get_shift_data <- function(gameid) {
+  print(gameid)
+  fromJSON(paste0(
+    "http://www.nhl.com/stats/rest/shiftcharts?cayenneExp=gameId=",
+    gameid))  %>%.[["data"]] %>% as_tibble()
+}
+
+
 process_data  <- function(pbp) {
   print(pbp$gamePk)
   # lots of nested data frames in the play-by-play data, we'll need to unnest and bind.
@@ -503,10 +511,10 @@ mygame2017020001 <- events %>% filter(gamePk == "2017020001")
 
 
 shifts <-
-  fromJSON("http://www.nhl.com/stats/rest/shiftcharts?cayenneExp=gameId=2017020001")
+  fromJSON("http://www.nhl.com/stats/rest/shiftcharts?cayenneExp=gameId=2017020001")  %>%.[["data"]] %>% as_tibble()
 
 # shifts_data a une ligne par joueur-shift
-shifts_data <- shifts[["data"]]  %>% as_tibble() %>%
+shifts_data <- shifts %>%
   left_join(
     players_data %>% select(playerId = player.id, player.fullName, player.primaryPosition.code)
   ) %>%
@@ -607,7 +615,9 @@ shifts <-
           int_end_time = max(time)) %>%
   filter(same == FALSE) %>%
   mutate(duration = int_end_time - int_start_time + 1) %>%
-  select(-same,-time) #%>%
+  select(-same,-time) %>%
+  ungroup()
+  
   # mutate(seconds = map2(int_start_time, int_end_time, ~ {
   #   ## Génération des secondes du shift
   #   data_frame(time = seq(from = .x ,
@@ -667,8 +677,288 @@ create2shifts <- shifts_n_goals %>% mutate(
     awaygoal,
     duration
   )
+## ok on appliquel e stack overflow
+model_data_home <- create2shifts %>% 
+  select(shift,period,  duration, for_goal = homegoal, for_players = homeplayers, against_players = awayplayers) %>% 
+  unnest(for_players, .drop = F) %>% 
+  spread(for_players, for_players, sep = '_') %>% 
+  unnest(against_players, .drop = F) %>% 
+  spread(against_players, against_players, sep = '_') %>% 
+  mutate_at(vars(-(1:4)), funs(as.numeric(!is.na(.))))
 
-### TODO: Now I need to take create2shifts and create dummies for each player ids.
+model_data_away <- create2shifts %>% 
+  select(shift,period,  duration, for_goal = awaygoal, for_players = awayplayers, against_players = homeplayers) %>% 
+  unnest(for_players, .drop = F) %>% 
+  spread(for_players, for_players, sep = '_') %>% 
+  unnest(against_players, .drop = F) %>% 
+  spread(against_players, against_players, sep = '_') %>% 
+  mutate_at(vars(-(1:4)), funs(as.numeric(!is.na(.))))
 
-TOR_playerIds <-
-  skaters %>% filter(teamAbbrev == "TOR") %>% distinct(playerId)
+model_data <- bind_rows(model_data_home, model_data_away) %>% 
+  mutate_at(vars(-(1:4)), funs(as.numeric(!is.na(.))))
+
+
+dummyvars <- model_data %>% select(starts_with("against_players") , starts_with("for_players")) %>% colnames
+fla <- paste("for_goal ~  offset(log(duration)) +", paste(dummyvars, collapse="+"))
+as.formula(fla)
+
+mod.gam <- mgcv::gam(
+  data = model_data,
+  formula = for_goal ~  offset(log(duration)) + against_players_8466139+against_players_8468493+against_players_8470611+against_players_8473463+against_players_8474037+against_players_8474581+against_players_8474709+against_players_8475098+against_players_8475172+against_players_8475786+against_players_8476853+against_players_8476941+against_players_8477015+against_players_8477939+against_players_8478483+against_players_8479318+against_players_8479458+against_players_8480158+against_players_8470828+against_players_8470834+against_players_8471218+against_players_8473412+against_players_8473574+against_players_8473618+against_players_8474574+against_players_8475179+against_players_8476392+against_players_8476460+against_players_8476469+against_players_8476885+against_players_8477429+against_players_8477448+against_players_8477504+against_players_8477940+against_players_8479293+against_players_8479339+for_players_8470828+for_players_8470834+for_players_8471218+for_players_8473412+for_players_8473574+for_players_8473618+for_players_8474574+for_players_8475179+for_players_8476392+for_players_8476460+for_players_8476469+for_players_8476885+for_players_8477429+for_players_8477448+for_players_8477504+for_players_8477940+for_players_8479293+for_players_8479339+for_players_8466139+for_players_8468493+for_players_8470611+for_players_8473463+for_players_8474037+for_players_8474581+for_players_8474709+for_players_8475098+for_players_8475172+for_players_8475786+for_players_8476853+for_players_8476941+for_players_8477015+for_players_8477939+for_players_8478483+for_players_8479318+for_players_8479458+for_players_8480158,
+  family = poisson(link = log)
+)
+
+summary(mod.gam)
+
+### exemple stackoverflow ----
+
+data <- tibble(
+  shift_id = c(1, 2, 3, 4, 5, 6, 7, 8,9,10),
+  shift_duration = c(12, 7, 30, 11, 14, 16, 19, 32,11,12),
+  goal_for = c(1, 1, 0, 0, 1, 1, 0, 0,0,0),
+  for_players = list(
+    c("A", "B"),
+    c("A", "C"),
+    c("B", "C"),
+    c("A", "C"),
+    c("B", "C"),
+    c("A", "B"),
+    c("B", "C"),
+    c("A", "B"),
+    c("B", "C"),
+    c("A", "B")
+  ),
+  against_players = list(
+    c("X", "Z"),
+    c("Y", "Z"),
+    c("X", "Y"),
+    c("X", "Y"),
+    c("X", "Z"),
+    c("Y", "Z"),
+    c("X", "Y"),
+    c("Y", "Z"),
+    c("X", "Y"),
+    c("Y", "Z")
+  )
+)
+
+
+model_data <- tibble(
+  shift_id = c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10),
+  shift_duration = c(12, 7, 30, 11, 14, 16, 19, 32, 11, 12),
+  goal_for = c(1, 1, 0, 0, 1, 1, 0, 0, 0, 0),
+  for_player_A = c(1, 1, 0, 1, 0, 1, 0, 1, 0, 1),
+  for_player_B = c(1, 0, 1, 0, 1, 1, 1, 1, 1, 1),
+  for_player_C = c(0, 1, 1, 1, 1, 0, 1, 0, 1, 0),
+  against_player_X = c(1, 0, 1, 1, 1, 0, 1, 0, 1, 0),
+  against_player_Y = c(0, 1, 1, 1, 0, 1, 1, 1, 1, 1),
+  against_player_Z = c(1, 1, 0, 0, 1, 1, 0, 1, 0, 1)
+)
+
+
+model_data
+
+mod.gam <- mgcv::gam(
+  data = model_data,
+  formula =  goal_for ~ offset(log(shift_duration)) + for_player_A + for_player_B  + for_player_C +
+    against_player_X + against_player_Y + against_player_Z,
+  family = poisson(link = log)
+)
+
+summary(mod.gam)
+
+# 8 purrr shifts ----
+
+# shift_data <- schedule %>% mutate(shift = map(id, get_shift_data))
+# saveRDS(shift_data, "shift_data.rds")
+
+players_data <- readRDS("players_data.rds")
+game_data <- readRDS("game_data.rds")
+events <- readRDS("mydf_events.rds")
+shift_data <- readRDS("shift_data.rds")
+
+#drop games for which I dont have any data
+schedule <- schedule %>% inner_join(game_data %>% distinct(id) )
+shift_data <- shift_data %>% inner_join(game_data %>% distinct(id) )
+#shift_data <- shift_data %>% head()
+shifts_data <- shift_data%>% unnest(shift) %>%  left_join(
+    players_data %>% select(playerId = player.id, player.fullName, player.primaryPosition.code)
+  ) %>%
+  select(
+    gamePk = gameId,
+    teamName,
+    period,
+    startTime,
+    endTime,
+    shiftNumber,
+    lastName,
+    player.primaryPosition.code,
+    everything()
+  ) %>% arrange(teamName, period, startTime) %>%
+
+  mutate( home_away = ifelse(teamAbbrev == h, "HOME", "AWAY"))
+
+# skaters prend shifts_data, enlève les gardiens et crée int_start_time et int_end_time
+skaters <-
+  shifts_data %>% filter(player.primaryPosition.code != "G") %>%
+  mutate(
+    int_start_time = as.integer(str_sub(startTime, 1, 2)) * 60 +  as.integer(str_sub(startTime, 4, 5)) ,
+    int_end_time = as.integer(str_sub(endTime, 1, 2)) * 60 +  as.integer(str_sub(endTime, 4, 5))
+  ) %>%
+  filter(int_start_time < int_end_time) 
+
+skaters_remove <-  # on dirait que les shifts bizarres avec durées 0 sont les buts des gens...  TODO : understand this
+  shifts_data %>% filter(player.primaryPosition.code != "G") %>%
+  mutate(
+    int_start_time = as.integer(str_sub(startTime, 1, 2)) * 60 +  as.integer(str_sub(startTime, 4, 5)) ,
+    int_end_time = as.integer(str_sub(endTime, 1, 2)) * 60 +  as.integer(str_sub(endTime, 4, 5))
+  ) %>%
+  filter(int_start_time >= int_end_time) 
+
+#list_time est la lsite de toutes les 3600 secondes du match( 3 périodes * 1200 secondes)
+## ah shit, ça inclut pas l,overtime.. tant pis , c'est jamais 5x5
+list_time <-
+  data.frame(period = c(rep(1, 1200), rep(2, 1200), rep(3, 1200)),
+             time = c(rep(seq(1, 1200), 3))) %>%
+  mutate(k=1) %>%
+  inner_join(shift_data %>% select(gamePk = id) %>% mutate(k=1)) %>%
+  select(-k)
+
+
+skaters_seconds <- skaters %>%
+  select(
+    gamePk,
+    home_away,
+    period,
+    int_start_time,
+    int_end_time,
+    lastName,
+    playerId,
+    player.primaryPosition.code
+  ) %>%
+  mutate(data = map2(int_start_time, int_end_time, ~ {
+    ## Génération des secondes du shift
+    data_frame(time = seq(from = .x + 1,
+                          to = .y,
+                          by = 1))
+  })) %>%
+  select(-int_end_time, -int_start_time)  %>%
+  unnest(data)
+
+
+goals <- events %>% filter(event == "Goal") %>%
+  mutate(time = as.integer(str_sub(periodTime, 1, 2)) * 60 +  as.integer(str_sub(periodTime, 4, 5))) %>%
+  select(gamePk, period, time, description, team.triCode)  %>%
+  left_join(schedule%>% select(gamePk = id, a, h )) %>%
+  mutate( home_away = ifelse(team.triCode == h, "HOME", "AWAY"))
+
+
+allseconds <- list_time  %>%
+  left_join(skaters_seconds  )
+
+
+shifts <-
+  allseconds %>% select(gamePk, period, time, home_away, playerId) %>% arrange(period, time, home_away, playerId) %>%  nest(-gamePk, -period,-time)  %>%
+  arrange(gamePk, period, time) %>%
+  left_join(goals %>% select(gamePk, period, time, home_away)) %>%
+  mutate (
+    team =  map(data, ~ .x[["home_away"]]),
+    players = map(data, ~ .x[["playerId"]]),
+    lagplayers = lag(players),
+    lagperiod = lag(period),
+    laggamePk = lag(gamePk),
+    #same = map2(players,lagplayers, function(x,y){ identical(x,y)}),
+    same = pmap(list(players, lagplayers, period, lagperiod, gamePk, laggamePk), function(players, lagplayers, period, lagperiod, gamePk, laggamePk) {
+      identical(players, lagplayers) & identical(period, lagperiod) & identical(gamePk, laggamePk)
+    }),
+    shift =  cumsum(same == FALSE)
+  ) %>%
+  select(-lagplayers,-data,-lagperiod, -laggamePk) %>%
+  group_by(shift) %>%
+  mutate (int_start_time = min(time),
+          ## i'd rather summarise than mutate+filter, but I cant group by players because it is a list
+          int_end_time = max(time),
+          home_away = case_when( 
+            any(home_away == "HOME") ~ "HOME",
+            any(home_away == "AWAY") ~ "AWAY",
+            TRUE ~ NA_character_)) %>%
+  ungroup()   %>%
+  filter(same == FALSE) %>%
+  mutate(duration = int_end_time - int_start_time + 1) %>%
+  select(-same,-time) 
+
+shifts_w_goals <- shifts %>% filter(!(is.na(home_away)))
+
+
+create2shifts <- shifts %>% mutate(
+  homeplayers = map2(players, team, function(players, team) {
+    players[team == "HOME"]
+  }),
+  awayplayers = map2(players, team, function(players, team) {
+    players[team == "AWAY"]
+  }),
+  homegoal = case_when(home_away == "HOME" ~ 1, TRUE ~ 0),
+  awaygoal = case_when(home_away == "AWAY" ~ 1, TRUE ~ 0)
+)  %>%
+  select(
+    gamePk,
+    shift,
+    period,
+    int_start_time,
+    int_end_time,
+    homeplayers,
+    awayplayers,
+    homegoal,
+    awaygoal,
+    duration
+  )
+## ok on appliquel e stack overflow
+model_data_home <- create2shifts %>% 
+  select(gamePk,shift,period,  duration, for_goal = homegoal, for_players = homeplayers, against_players = awayplayers) %>% 
+  unnest(for_players, .drop = F) %>% 
+  spread(for_players, for_players, sep = '_') %>% 
+  unnest(against_players, .drop = F) %>% 
+  spread(against_players, against_players, sep = '_') #%>% 
+  #mutate_at(vars(-(1:5)), funs(as.numeric(!is.na(.))))
+
+model_data_away <- create2shifts %>% 
+  select(gamePk,shift,period,  duration, for_goal = awaygoal, for_players = awayplayers, against_players = homeplayers) %>% 
+  unnest(for_players, .drop = F) %>% 
+  spread(for_players, for_players, sep = '_') %>% 
+  unnest(against_players, .drop = F) %>% 
+  spread(against_players, against_players, sep = '_')# %>% 
+  #mutate_at(vars(-(1:5)), funs(as.numeric(!is.na(.))))
+
+model_data <- bind_rows(model_data_home, model_data_away) %>% 
+  mutate_at(vars(-(1:5)), funs(as.numeric(!is.na(.))))
+
+
+dummyvars <- model_data %>% select(starts_with("against_players") , starts_with("for_players")) %>% colnames
+fla <- paste("for_goal ~  offset(log(duration)) +", paste(dummyvars, collapse="+")) %>% as.formula(.)
+Sys.setenv(LANGUAGE = "en")
+
+mod.gam <- mgcv::gam(
+  formula = fla,
+  data = model_data,
+  family = poisson(link = log)
+)
+mod.gam$coefficients
+saveRDS(mod.gam, file= "mod.gam.rds")
+
+mod.glm <- glm(
+  formula = fla,
+  data = model_data,
+  family = poisson(link = log)
+)
+
+
+
+mod.glm$coefficients
+saveRDS(mod.glm, file= "mod.glm.rds")
+coefs <- broom::tidy(mod.glm)
+broom::glance(mod.gam)
+
+# best defensive contributors
+coefs  %>%  filter( str_detect(term, "against")) %>% arrange(estimate) %>% mutate(player.id = as.numeric(str_extract(term, "\\d+"))) %>% left_join(players_data %>% select(player.id, player.fullName, player.primaryPosition.name))
+# best offensive contributors
+coefs  %>%  filter( str_detect(term, "for")) %>% arrange(-estimate) %>% mutate(player.id = as.numeric(str_extract(term, "\\d+"))) %>% left_join(players_data %>% select(player.id, player.fullName, player.primaryPosition.name))
