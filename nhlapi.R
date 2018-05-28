@@ -145,7 +145,7 @@ single_players_data <- get_player_data("8475172")
 
 # Example - purrr the whole season----
 
-# 1 - get game schedule ----
+# ** 1 - get game schedule ----
 
 schedule <-
   get_schedule()  %>% filter(est < Sys.time() - 12 * 60 * 60)
@@ -156,14 +156,14 @@ schedule <-
 # in list format (pbp) then wrangle the data to create two tables:
 # one containing the events (one row per game_id + eventId)and one containing the events_players (one row per game_id + eventId + player_id)
 
-# 2 - download data from past games ----
+# ** 2 - download data from past games ----
 game_data <- schedule %>%  mutate(pbp = map(id, get_data))
 saveRDS(game_data, "game_data.rds")
 #
 
-# 3 - process data ----
+# ** 3 - process data ----
 game_data <- readRDS("game_data.rds")
-# 3A process with purrr:map ----
+# **** 3A single-core purrr:map ----
 processed_data <- game_data %>%
   mutate(processed = map(pbp , process_data)) %>%
   mutate(events = map(processed, ~ .x[["events"]]),
@@ -175,7 +175,7 @@ saveRDS(processed_data, "processed_data.rds")
 saveRDS(mydf_events, "mydf_events.rds")
 saveRDS(mydf_events_players, "mydf_events_players.rds")
 
-# 3B alternative process with parallel::parLapply ----
+# **** 3B parallel::parLapply ----
 
 library(parallel)
 cl <- makeCluster(parallel:::detectCores() - 1)
@@ -193,7 +193,7 @@ mydf_events_parallel <-
 mydf_events_players_parallel <-
   processed_data_parallel$events_players %>% bind_rows()
 
-# 4 get data for players involved in any game ----
+# ** 4 get data for players involved in any game ----
 players_data <- mydf_events_players %>%
   distinct(player.id) %>%
   pull(player.id) %>%
@@ -201,7 +201,7 @@ players_data <- mydf_events_players %>%
   map_df(get_player_data)
 saveRDS(players_data, "players_data.rds")
 
-# 5 plot data ----
+# ** 5 plot data ----
 
 processed_data <- readRDS("processed_data.rds")
 mydf_events <- readRDS("mydf_events.rds")
@@ -503,7 +503,7 @@ ggsave("goal_pct.png")
 
 
 
-# 6 wrangle model_data  ----
+# 6 wrangle shifts data  ----
 
 # shift_data <- schedule %>% mutate(shift = map(id, get_shift_data))
 # saveRDS(shift_data, "shift_data.rds")
@@ -723,8 +723,6 @@ as.numeric(tfin - tdeb, units = "mins")
 saveRDS(model_data, file = "model_data.rds") # 730 000 rows
 
 
-## total time played ----
-
 tdeb <- Sys.time()
 cl <- parallel::makeForkCluster(parallel:::detectCores() - 1)
 total_time_played  <-
@@ -793,8 +791,7 @@ as.numeric(tfin - tdeb, units = "mins")
 
 saveRDS(total_time_played, file = "total_time_played.rds") # 730 000 rows
 
-#7 -  model ----
-
+#7 - model goals using shift data ----
 
 #total_time_played <- readRDS( "total_time_played") # 730 000 rows
 #model_data <- readRDS( "model_data.rds") # 730 000 rows
@@ -804,7 +801,8 @@ model_data_df <-
   filter(duration >= 10, for_strength == 5, against_strength == 5) # even strength, at least 10 seconds 
 
 dummyvars <-
-  model_data_df %>% select(starts_with("against_players") , starts_with("for_players")) %>% colnames
+  model_data_df %>% select(starts_with("against_players") , starts_with("for_players")) %>% 
+  select(-against_players_8474056, -for_players_8474056) %>% colnames # P.K. Subban is reference.
 
 fla <-
   paste("for_goal ~  offset(log(duration)) +",
