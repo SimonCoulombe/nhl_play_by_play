@@ -42,3 +42,18 @@ Here's the link to the shifts JSON's:
 # Rosters:           http://www.nhl.com/scores/htmlreports/20162017/RO020001.HTM
 # ESPN Scoreboard:   http://scores.espn.com/nhl/scoreboard?date=20161012
 # ESPN Coordinates:  http://www.espn.com/nhl/gamecast/data/masterFeed?lang=en&isAll=true&gameId=400884397
+
+
+# 2019 some notes:
+war on ice blog glossary (inc locatio ndata)
+http://blog.war-on-ice.com/
+
+rebounds (3 seconds from last shot)  
+rush shot 4 seconds from event in other zone Shot features, gleaned from the play by play: rebounds are classified shots taken within 3 seconds of another shot attempt3, and rush shots are taken within 4 seconds of an event in another zone (a definition derived from David Johnson’s work).
+
+http://www.corsica.hockey/blog/2016/03/03/shot-quality-and-expected-goals-part-i/
+
+Expected Goals are a better predictor of future scoring than Corsi, Goals
+https://hockey-graphs.com/2015/10/01/expected-goals-are-a-better-predictor-of-future-scoring-than-corsi-goals/
+
+
