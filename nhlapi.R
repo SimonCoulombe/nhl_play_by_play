@@ -13,7 +13,7 @@ library(tidyverse)
 library(furrr)
 library(tictoc)
 library(lightgbm)
-plan(multiprocess(workers= 6))
+plan(multiprocess(workers=8))
 
 # define functions ----
 get_schedule <- function(season = "20172018") {
@@ -61,7 +61,7 @@ get_data  <- function(gameid) {
 }
 
 get_shift_data <- function(gameid) {
-  print(gameid)
+  #print(gameid)
   fromJSON(
     paste0(
       "http://www.nhl.com/stats/rest/shiftcharts?cayenneExp=gameId=",
@@ -166,7 +166,7 @@ schedule <-
 tic()
 game_data <- schedule %>%   mutate(pbp = future_map(id, get_data, .progress = TRUE))
 toc() # 39s sur8 coeurs
-save_rds(game_data, "game_data.rds") # 360s sur 1 coeur 
+write_rds(game_data, "game_data.rds") # 360s sur 1 coeur 
 # ** 3 - process data ----
 #game_data <- read_rds("game_data.rds")
 # **** 3A multicore furrr::future_map ----
@@ -524,13 +524,14 @@ game_data <- readRDS("game_data.rds")
 events <- readRDS("mydf_events.rds")
 
 # 
-# shift_data <- schedule %>% 
-#   mutate(shift = future_map(id, get_shift_data, .progress= TRUE))
-# 
+# shift_data <- schedule %>%
+#   #mutate(shift = future_map(id, get_shift_data, .progress= TRUE)) # error vector too big?
+#   mutate(shift = map(id, get_shift_data))
+
 # write_rds(shift_data, "shift_data.rds")
 
 
-shift_data <- read_rds("shift_data.rds")  %>% as_tibble()
+#shift_data <- read_rds("shift_data.rds")  %>% as_tibble()
 
 
 z <-
@@ -547,7 +548,7 @@ X <- shift_data$shift[[33]]
 
 tdeb <- Sys.time()
 #cl <- parallel::makeForkCluster(parallel::detectCores() - 1)
-cl <- parallel::makeForkCluster(4)
+cl <- parallel::makeForkCluster(15)
 model_data  <-
   parallel::parLapply(
     cl = cl,
@@ -614,7 +615,11 @@ model_data  <-
           })) %>%
           select(-int_end_time,-int_start_time)  %>%
           unnest(data) %>%
-          select(gamePk, period, time, home_away, playerId) %>% arrange(period, time, home_away, playerId) %>%  nest(-gamePk,-period, -time)  %>%
+          select(gamePk, period, time, home_away, playerId) %>% 
+          arrange(period, time, home_away, playerId) %>%  
+          group_by(gamePk, period, time) %>%
+          nest() %>%
+          #nest(-gamePk,-period, -time)  %>%
           arrange(gamePk, period, time) %>%
           left_join(goals %>% select(gamePk, period, time, home_away))
         
@@ -882,6 +887,16 @@ preds <- tibble(preds_avec_subban =  predict(model_coll,  Matrix(prepared_featur
 
 
 ## fin lightgbm
+
+# parglm (multicore?)
+library(parglm)
+
+myglm <- parglm(formula = fla,
+       data = model_data_df,
+       family = poisson(link = log),
+       control = parglm.control(nthreads = 20L))
+
+# speedglm (singlecore)
 write_rds(model_data_df,"model_data_df.rds" )
 write_rds(fla, "fla.rds")
 
