@@ -153,7 +153,7 @@ single_players_data <- get_player_data("8475172")
 # ** 1 - get game schedule ----
 
 schedule <-
-  get_schedule()  %>% filter(est < Sys.time() - 12 * 60 * 60)
+  get_schedule(season = "20182019")  %>% filter(est < Sys.time() - 12 * 60 * 60)
 # keep games that started at least 12 hours ago, because games in progress have
 # events, but don't have the "strength" nested data.frame
 
@@ -517,21 +517,20 @@ ggsave("goal_pct.png")
 
 
 # 6 wrangle shifts data  ----
-
-schedule <- get_schedule(season = "20172018")
+# 
+schedule <- get_schedule(season = "20182019")
 players_data <- readRDS("players_data.rds")
 game_data <- readRDS("game_data.rds")
 events <- readRDS("mydf_events.rds")
 
-# 
-# shift_data <- schedule %>%
-#   #mutate(shift = future_map(id, get_shift_data, .progress= TRUE)) # error vector too big?
-#   mutate(shift = map(id, get_shift_data))
+shift_data <- schedule %>%
+  mutate(shift = future_map(id, get_shift_data, .progress= TRUE)) # error vector too big?
+  #mutate(shift = map(id, get_shift_data))
 
-# write_rds(shift_data, "shift_data.rds")
+write_rds(shift_data, "shift_data20182019.rds")
 
 
-#shift_data <- read_rds("shift_data.rds")  %>% as_tibble()
+shift_data <- read_rds("shift_data20182019.rds")  %>% as_tibble()
 
 
 z <-
@@ -548,11 +547,12 @@ X <- shift_data$shift[[33]]
 
 tdeb <- Sys.time()
 #cl <- parallel::makeForkCluster(parallel::detectCores() - 1)
-cl <- parallel::makeForkCluster(15)
+cl <- parallel::makeForkCluster(30)
 model_data  <-
   parallel::parLapply(
     cl = cl,
     X = shift_data$shift[z$keep],
+    #X = shift_data$shift[1:30],
     fun = function(X) {
       result <- list()
       
@@ -585,8 +585,8 @@ model_data  <-
           
           mutate(home_away = ifelse(teamAbbrev == h, "HOME", "AWAY")) %>%
           # enlève les gardiens
+          #filter(player.primaryPosition.code != "G") %>%
           
-          filter(player.primaryPosition.code != "G") %>%
           # crée int_start_time et int_end_time
           mutate(
             int_start_time = as.integer(str_sub(startTime, 1, 2)) * 60 +  as.integer(str_sub(startTime, 4, 5)) ,
@@ -691,6 +691,8 @@ model_data  <-
             length(X)
           })) %>% unnest(strength_away)
         ## ok on appliquel e stack overflow
+        
+        
         model_data_home <- create2shifts %>%
           select(
             gamePk,
@@ -705,11 +707,11 @@ model_data  <-
             for_strength = strength_home,
             against_strength = strength_away
           ) %>%
+          mutate(for_players = map(for_players,unique), against_players = map(against_players, unique)) %>% # prevent error when spreading duplicated in 20182019
           unnest(for_players, .drop = F) %>%
           spread(for_players, for_players, sep = '_') %>%
           unnest(against_players, .drop = F) %>%
-          spread(against_players, against_players, sep = '_') #%>%
-        #mutate_at(vars(-(1:5)), funs(as.numeric(!is.na(.))))
+          spread(against_players, against_players, sep = '_')
         
         model_data_away <- create2shifts %>%
           select(
@@ -725,17 +727,16 @@ model_data  <-
             for_strength = strength_away,
             against_strength = strength_home
           ) %>%
+          mutate(for_players = map(for_players,unique), against_players = map(against_players, unique)) %>%
           unnest(for_players, .drop = F) %>%
           spread(for_players, for_players, sep = '_') %>%
           unnest(against_players, .drop = F) %>%
-          spread(against_players, against_players, sep = '_')# %>%
-        #mutate_at(vars(-(1:5)), funs(as.numeric(!is.na(.))))
+          spread(against_players, against_players, sep = '_')
         
         model_data <-
-          bind_rows(model_data_home, model_data_away) #%>%
-        #mutate_at(vars(-(1:5)), funs(as.numeric(!is.na(.))))
-        
+          bind_rows(model_data_home, model_data_away)
         result <- model_data
+        
       }
       result
     }
@@ -745,11 +746,12 @@ parallel::stopCluster(cl)
 tfin <- Sys.time() # 2 minutes on 31 cores, up to 50 GB RAM use
 as.numeric(tfin - tdeb, units = "mins")
 
-saveRDS(model_data, file = "model_data.rds") # 730 000 rows
+saveRDS(model_data, file = "model_data20182019.rds") # 730 000 rows
+
 
 
 tdeb <- Sys.time()
-cl <- parallel::makeForkCluster(4)
+cl <- parallel::makeForkCluster(12)
 total_time_played  <-
   parallel::parLapply(
     cl = cl,
@@ -780,7 +782,7 @@ total_time_played  <-
           mutate(home_away = ifelse(teamAbbrev == h, "HOME", "AWAY")) %>%
           # enlève les gardiens
           
-          filter(player.primaryPosition.code != "G") %>%
+          #filter(player.primaryPosition.code != "G") %>%
           # crée int_start_time et int_end_time
           mutate(
             int_start_time = as.integer(str_sub(startTime, 1, 2)) * 60 +  as.integer(str_sub(startTime, 4, 5)) ,
@@ -814,24 +816,26 @@ total_time_played <-
 tfin <- Sys.time() # 2 minutes on 31 cores, up to 50 GB RAM use
 as.numeric(tfin - tdeb, units = "mins")
 
-saveRDS(total_time_played, file = "total_time_played.rds") # 730 000 rows
+saveRDS(total_time_played, file = "total_time_played20182019.rds") # 730 000 rows
 
 #7 - model goals using shift data ----
 
-total_time_played <- readRDS( "total_time_played") # 730 000 rows
-model_data <- readRDS( "model_data.rds") # 730 000 rows
+#total_time_played <- readRDS( "total_time_played") # 730 000 rows
+model_data <- readRDS( "model_data20182019.rds") # 730 000 rows
 
 model_data_df <-
   model_data %>% bind_rows %>% 
   mutate_at(vars(starts_with("against_players") , starts_with("for_players")), 
             funs(as.integer(!is.na(.)))) %>%  # convert dummy to 01/ 
-  filter(for_strength == 5, against_strength == 5)
+  filter(for_strength == 6, against_strength == 6)
+
+
 
 
 dummyvars <-
   model_data_df %>% select(starts_with("against_players") , starts_with("for_players")) %>% 
-#select(-against_players_8474056, -for_players_8474056) %>% colnames # P.K. Subban is reference.
- colnames()
+  #select(-against_players_8474056, -for_players_8474056) %>% colnames # P.K. Subban is reference.
+  colnames()
 
 fla <-
   paste("for_goal ~  offset(log(duration)) +",
@@ -844,47 +848,146 @@ fla <-
 
 library(lightgbm)
 library(Matrix)
-param <- list(num_leaves = 4, # num_leaves = 2^(max_depth).
-              learning_rate = 0.1,
-              nthread = 7,
+param <- list(num_leaves = 2, # num_leaves = 2^(max_depth).
+              learning_rate = 0.01,
+              nthread = 29,
               objective = "poisson",
-              feature_fraction = 1,
+              feature_fraction = 0.8,
               bagging_fraction = 0.6,
               min_data_in_leaf = 3,
-              num_rounds= 500)
+              num_rounds= 10000)
 
-chap_data <- model_data_df
 
-prepared_features <- lgb.prepare(data= chap_data %>% select(dummyvars )  ) %>% # convertir character en nombre
+
+prepared_features <- lgb.prepare(data= model_data_df %>% select(dummyvars )  ) %>% # convertir character en nombre
   as.matrix(with = FALSE) # # Data input to LightGBM must be a matrix, without the label
 
 
 dtrain <- lgb.Dataset(data= prepared_features, 
-                      label = chap_data$for_goal)
+                      label = model_data_df$for_goal)
 
-setinfo(dtrain, "init_score", log(chap_data$duration))
+setinfo(dtrain, "init_score", log(model_data_df$duration))
 
-
-rm(model_data_df, model_data)
-rm(prepared_features)
-rm(chap_data)
-gc()
 cv_coll <- lgb.cv(param,
                   dtrain,
                   nfold = 5,
                   eval = "poisson",
                   early_stopping_rounds = 50)
 
-model_coll <- lgb.train(param,
-                        dtrain,
-                        nrounds= cv_coll$best_iter)
-lgb.save(model_coll, here::here("models","model_coll.model"))
-B_avecSubban <- Matrix(prepared_features %>% mutate(for_players_8474056==1), sparse = TRUE)  
-
-preds <- tibble(preds_avec_subban =  predict(model_coll,  Matrix(prepared_features %>% mutate(for_players_8474056==1), sparse = TRUE)  ))
+model_nhl <- lgb.train(param,
+                       dtrain,
+                       nrounds= cv_coll$best_iter)
 
 
 
+lgb.save(model_nhl, here::here("model_nhl20182019.model"))
+model_nhl <- lgb.load( here::here("model_nhl20182019.model"))
+
+
+temp <- data.frame(diag(2006)) 
+dummyvars[1]
+colnames(temp) <- colnames(model_data_df%>% select(dummyvars ))
+temp <- bind_rows(temp %>% head(1) %>% mutate(against_players_8471679 = 0 ),
+                  temp)
+
+
+
+
+
+matrix_for_preds <- Matrix( lgb.prepare(data= temp  ) %>% # convertir character en nombre
+                              as.matrix(with = FALSE),sparse = TRUE)
+#tout_a_zero <- model_data_df %>% select(dummyvars )   %>% mutate_all(~ 0) # plante
+preds <- tibble(preds =
+                  predict(model_nhl,
+                          matrix_for_preds)
+                  )
+
+
+preds$var <- c("ref", dummyvars)
+preds <- preds %>% mutate(var = str_replace(var,"_players", ""))
+preds2 <- preds %>% 
+  separate(var, into = c("type", "player.id"))  %>% 
+  mutate(player.id = as.integer(player.id)) %>%
+  mutate(type =case_when(type == "for"~ "offense",
+                         type == "against"~ "defense",
+                         TRUE ~ type)
+  )
+
+players_data <- readRDS("players_data.rds")
+
+reference <- preds2 %>% filter(type == "ref")  %>% pull(preds) %>% .[1]
+reference * 3600
+z <- preds2 %>% filter(type != "ref") %>% group_by(player.id) %>% spread(key= type, value = preds)
+
+
+zz <- z %>% left_join(
+  players_data %>% 
+    select(player.id, player.fullName, player.primaryPosition.code, player.currentTeam.name)) %>%
+  left_join(total_time_played %>% 
+              rename(player.id = playerId) %>%
+              mutate(hours_played = duration / 3600) %>% 
+              select(-duration)) %>%
+  mutate(
+    offense = offense  * 3600,
+    defense = defense * 3600,
+    differential = offense - defense) %>%
+  arrange(-differential) %>%
+  filter(hours_played > 10)
+
+
+offensive <- preds2 %>% 
+  filter(type=="for") %>% 
+  arrange(-preds) %>% 
+  left_join(
+    players_data %>% 
+      select(player.id, player.fullName, player.primaryPosition.code, player.currentTeam.name)) %>%
+  left_join(total_time_played %>% 
+              rename(player.id = playerId) %>%
+              mutate(hours_played = duration / 3600) %>% 
+              select(-duration)) %>%
+  filter(hours_played > 10)
+
+defensive <- preds2 %>% 
+  filter(type=="against") %>% 
+  arrange(preds) %>% 
+  left_join(
+    players_data %>% 
+      select(player.id, player.fullName, player.primaryPosition.code, player.currentTeam.name)) %>%
+  left_join(total_time_played %>% 
+              rename(player.id = playerId) %>%
+              mutate(hours_played = duration / 3600) %>% 
+              select(-duration)) %>%
+  filter(hours_played > 10)
+
+# 
+# tout_a_zero <- model_data_df %>% 
+#   select(dummyvars ) %>% 
+#   mutate_all(~ 0)
+# 
+# model_nhl <- lgb.load( here::here("model_nhl.model"))
+# preds <- tibble(preds_avec_subban = 
+#                   predict(model_nhl,  
+#                           Matrix(
+#                             lgb.prepare(
+#                               data= model_data_df %>% 
+#                                 select(dummyvars ) %>% 
+#                                 mutate_all(0) %>%
+#                                 mutate(for_players_8474056==1)) %>%
+#                               as.matrix(with = FALSE), 
+#                             sparse = TRUE 
+#                             
+#                           )
+#                   )
+# )
+# 
+# 
+# z <- model_data_df %>% 
+#   select(dummyvars ) %>% 
+#   mutate_all(~ 0)
+
+
+#%>%
+# mutate(for_players_8474056==1))
 
 ## fin lightgbm
 
@@ -892,9 +995,9 @@ preds <- tibble(preds_avec_subban =  predict(model_coll,  Matrix(prepared_featur
 library(parglm)
 
 myglm <- parglm(formula = fla,
-       data = model_data_df,
-       family = poisson(link = log),
-       control = parglm.control(nthreads = 20L))
+                data = model_data_df,
+                family = poisson(link = log),
+                control = parglm.control(nthreads = 20L))
 
 # speedglm (singlecore)
 write_rds(model_data_df,"model_data_df.rds" )
