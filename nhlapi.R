@@ -849,13 +849,13 @@ fla <-
 library(lightgbm)
 library(Matrix)
 param <- list(num_leaves = 2, # num_leaves = 2^(max_depth).
-              learning_rate = 0.01,
+              learning_rate = 0.005,
               nthread = 29,
               objective = "poisson",
-              feature_fraction = 0.8,
-              bagging_fraction = 0.6,
-              min_data_in_leaf = 3,
-              num_rounds= 10000)
+              feature_fraction = 0.5,
+              bagging_fraction = 0.5,
+              min_data_in_leaf = 1,
+              num_rounds= 50000)
 
 
 
@@ -877,6 +877,13 @@ cv_coll <- lgb.cv(param,
 model_nhl <- lgb.train(param,
                        dtrain,
                        nrounds= cv_coll$best_iter)
+
+
+
+model_nhl2 <- lgb.train(param,
+                       dtrain,
+                       nrounds= 50000)
+
 
 
 
@@ -917,10 +924,11 @@ players_data <- readRDS("players_data.rds")
 
 reference <- preds2 %>% filter(type == "ref")  %>% pull(preds) %>% .[1]
 reference * 3600
+
+
 z <- preds2 %>% filter(type != "ref") %>% group_by(player.id) %>% spread(key= type, value = preds)
 
-
-zz <- z %>% left_join(
+results <- z %>% left_join(
   players_data %>% 
     select(player.id, player.fullName, player.primaryPosition.code, player.currentTeam.name)) %>%
   left_join(total_time_played %>% 
@@ -934,111 +942,61 @@ zz <- z %>% left_join(
   arrange(-differential) %>%
   filter(hours_played > 10)
 
+write_rds(results, "results.rds")
 
-offensive <- preds2 %>% 
-  filter(type=="for") %>% 
-  arrange(-preds) %>% 
-  left_join(
-    players_data %>% 
-      select(player.id, player.fullName, player.primaryPosition.code, player.currentTeam.name)) %>%
-  left_join(total_time_played %>% 
-              rename(player.id = playerId) %>%
-              mutate(hours_played = duration / 3600) %>% 
-              select(-duration)) %>%
-  filter(hours_played > 10)
-
-defensive <- preds2 %>% 
-  filter(type=="against") %>% 
-  arrange(preds) %>% 
-  left_join(
-    players_data %>% 
-      select(player.id, player.fullName, player.primaryPosition.code, player.currentTeam.name)) %>%
-  left_join(total_time_played %>% 
-              rename(player.id = playerId) %>%
-              mutate(hours_played = duration / 3600) %>% 
-              select(-duration)) %>%
-  filter(hours_played > 10)
-
-# 
-# tout_a_zero <- model_data_df %>% 
-#   select(dummyvars ) %>% 
-#   mutate_all(~ 0)
-# 
-# model_nhl <- lgb.load( here::here("model_nhl.model"))
-# preds <- tibble(preds_avec_subban = 
-#                   predict(model_nhl,  
-#                           Matrix(
-#                             lgb.prepare(
-#                               data= model_data_df %>% 
-#                                 select(dummyvars ) %>% 
-#                                 mutate_all(0) %>%
-#                                 mutate(for_players_8474056==1)) %>%
-#                               as.matrix(with = FALSE), 
-#                             sparse = TRUE 
-#                             
-#                           )
-#                   )
-# )
-# 
-# 
-# z <- model_data_df %>% 
-#   select(dummyvars ) %>% 
-#   mutate_all(~ 0)
-
-
-#%>%
-# mutate(for_players_8474056==1))
 
 ## fin lightgbm
+# 
+# # parglm (multicore?)
+# library(parglm)
+# 
+# myglm <- parglm(formula = fla,
+#                 data = model_data_df,
+#                 family = poisson(link = log),
+#                 control = parglm.control(nthreads = 20L))
+# 
+# # speedglm (singlecore)
+# write_rds(model_data_df,"model_data_df.rds" )
+# write_rds(fla, "fla.rds")
+# 
+# model_data_df <- read_rds("model_data_df.rds" )
+# fla <- read_rds( "fla.rds")
+# tdeb <- Sys.time()
+# mod.glm <- speedglm(formula = fla,
+#                     data = model_data_df,
+#                     family = poisson(link = log))
+# 
+# tfin <- Sys.time()
+# as.numeric(tfin - tdeb, units = "mins") # 3 minutes # crash 30 GB.
+# 
+# #mod.glm$coefficients
+# saveRDS(mod.glm, file = "mod.glm.rds")
+# coefs <- broom::tidy(mod.glm)
+# #broom::glance(mod.glm)
+# 
+# # best defensive contributors
+# defense <- coefs  %>%  filter(str_detect(term, "against")) %>% arrange(estimate) %>% mutate(playerId = as.numeric(str_extract(term, "\\d+"))) %>% left_join(
+#   players_data %>% select(
+#     playerId = player.id,
+#     player.fullName,
+#     player.primaryPosition.name,
+#     player.currentTeam.name
+#   )
+# )  %>% left_join(total_time_played ) %>% filter(duration> 10000) %>% select(-term) 
+# 
+# 
+# # best offensive contributors
+# attack <- coefs  %>%  filter(str_detect(term, "for")) %>% 
+#   arrange(-estimate) %>% 
+#   mutate(playerId = as.numeric(str_extract(term, "\\d+"))) %>% 
+#   left_join(
+#     players_data %>% select(
+#       playerId = player.id,
+#       player.fullName,
+#       player.primaryPosition.name,
+#       player.currentTeam.name
+#     )
+#   )  %>% left_join(total_time_played ) %>% filter(duration> 10000) %>% select(-term) 
+# 
 
-# parglm (multicore?)
-library(parglm)
-
-myglm <- parglm(formula = fla,
-                data = model_data_df,
-                family = poisson(link = log),
-                control = parglm.control(nthreads = 20L))
-
-# speedglm (singlecore)
-write_rds(model_data_df,"model_data_df.rds" )
-write_rds(fla, "fla.rds")
-
-model_data_df <- read_rds("model_data_df.rds" )
-fla <- read_rds( "fla.rds")
-tdeb <- Sys.time()
-mod.glm <- speedglm(formula = fla,
-                    data = model_data_df,
-                    family = poisson(link = log))
-
-tfin <- Sys.time()
-as.numeric(tfin - tdeb, units = "mins") # 3 minutes # crash 30 GB.
-
-#mod.glm$coefficients
-saveRDS(mod.glm, file = "mod.glm.rds")
-coefs <- broom::tidy(mod.glm)
-#broom::glance(mod.glm)
-
-# best defensive contributors
-defense <- coefs  %>%  filter(str_detect(term, "against")) %>% arrange(estimate) %>% mutate(playerId = as.numeric(str_extract(term, "\\d+"))) %>% left_join(
-  players_data %>% select(
-    playerId = player.id,
-    player.fullName,
-    player.primaryPosition.name,
-    player.currentTeam.name
-  )
-)  %>% left_join(total_time_played ) %>% filter(duration> 10000) %>% select(-term) 
-
-
-# best offensive contributors
-attack <- coefs  %>%  filter(str_detect(term, "for")) %>% 
-  arrange(-estimate) %>% 
-  mutate(playerId = as.numeric(str_extract(term, "\\d+"))) %>% 
-  left_join(
-    players_data %>% select(
-      playerId = player.id,
-      player.fullName,
-      player.primaryPosition.name,
-      player.currentTeam.name
-    )
-  )  %>% left_join(total_time_played ) %>% filter(duration> 10000) %>% select(-term) 
 
